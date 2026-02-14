@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TRINXT.SA</title>
+</head>
+<body>
+  <h1>Welcome To TRINXT.SA</h1>
+
+  <form id="saveForm">
+    <label>
+      الاسم:
+      <input type="text" name="name" required />
+    </label>
+    <br /><br />
+
+    <label>
+      رقم الجوال:
+      <input type="tel" name="phone" required placeholder="05xxxxxxxx" />
+    </label>
+    <br /><br />
+
+    <label>
+      البريد الإلكتروني:
+      <input type="email" name="email" required placeholder="name@example.com" />
+    </label>
+    <br /><br />
+
+    <label>
+      المنطقة:
+      <select name="region" required>
+        <option value="" disabled selected>اختر المنطقة</option>
+        <option>منطقة الرياض</option>
+        <option>منطقة مكة المكرمة</option>
+        <option>منطقة المدينة المنورة</option>
+        <option>منطقة القصيم</option>
+        <option>المنطقة الشرقية</option>
+        <option>منطقة عسير</option>
+        <option>منطقة تبوك</option>
+        <option>منطقة حائل</option>
+        <option>منطقة الحدود الشمالية</option>
+        <option>منطقة جازان</option>
+        <option>منطقة نجران</option>
+        <option>منطقة الباحة</option>
+        <option>منطقة الجوف</option>
+      </select>
+    </label>
+
+    <br /><br />
+    <button type="submit">إرسال</button>
+  </form>
+
+  <p id="status"></p>
+
+  <script>
+    const form = document.getElementById("saveForm");
+    const statusEl = document.getElementById("status");
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+
+      const payload = Object.fromEntries(new FormData(form).entries());
+      statusEl.textContent = "جارٍ الحفظ...";
+
+      try {
+        const res = await fetch("/save", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+
+        const text = await res.text();
+        let data = {};
+        try { data = JSON.parse(text); } catch {}
+
+        if (!res.ok) {
+          statusEl.textContent = "خطأ: " + (data.error || text || "Unknown error");
+          return;
+        }
+
+        statusEl.textContent = "تم الحفظ بنجاح ✅ جاري التحويل...";
+
+// Small delay so user sees success message (optional)
+setTimeout(() => {
+  window.location.href = "https://trinxt-sa.com/?fbclid=PAdGRleAP8qR5leHRuA2FlbQIxMQBzcnRjBmFwcF9pZA8xMjQwMjQ1NzQyODc0MTQAAacOA4V25tjsJYOuhz1WCF53TPCM9ha3DNnPKn00z5McCjtvNlzwghz-VHVNtg_aem_eBBskYFENSPiBiXCLpgdEw&utm_content=link_in_bio&utm_medium=social&utm_source=ig";
+}, 1500);
+
+      } catch (err) {
+        console.error(err);
+        statusEl.textContent = "خطأ في الاتصال بالسيرفر. تأكد أن السيرفر شغال.";
+      }
+    });
+  </script>
+</body>
+</html>
