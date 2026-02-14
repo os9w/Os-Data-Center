@@ -1,53 +1,82 @@
 import express from "express";
-import fs from "fs/promises";
+import mongoose from "mongoose";
 import path from "path";
+import { fileURLToPath } from "url";
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
+// Fix for ES modules (__dirname replacement)
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Middleware
 app.use(express.json());
-app.use(express.static("public"));
+app.use(express.static(path.join(__dirname, "public")));
 
-const DATA_DIR = path.join(process.cwd(), "data");
-const COUNTERS_FILE = path.join(DATA_DIR, "counters.json");
+// Root route (fixes Cannot GET /)
+app.get("/", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "index.html"));
+});
 
-function safeText(value, maxLen) {
-  return String(value ?? "").trim().slice(0, maxLen);
+// ================= MongoDB =================
+
+const MONGODB_URI = process.env.MONGODB_URI;
+
+if (!MONGODB_URI) {
+  console.error("❌ MONGODB_URI not set");
 }
 
-// Turn Arabic region label into:
-// - regionKey: safe folder name (ascii)
-// - regionPrefix: Arabic first-letter (after removing "منطقة" / "المنطقة" / "ال")
+mongoose.connect(MONGODB_URI)
+  .then(() => console.log("✅ Connected to MongoDB Atlas"))
+  .catch(err => console.error("❌ MongoDB connection error:", err));
+
+// ================= Regions =================
+
 const REGION_MAP = {
   "منطقة الرياض": { key: "riyadh", prefix: "ر" },
   "منطقة مكة المكرمة": { key: "makkah", prefix: "م" },
-  "منطقة المدينة المنورة": { key: "madinah", prefix: "م" }, // same prefix is OK because each region has its own database folder
+  "منطقة المدينة المنورة": { key: "madinah", prefix: "د" },
   "منطقة القصيم": { key: "qassim", prefix: "ق" },
-  "المنطقة الشرقية": { key: "eastern", prefix: "ش" }, // الشرقية -> ش
+  "المنطقة الشرقية": { key: "eastern", prefix: "ش" },
   "منطقة عسير": { key: "asir", prefix: "ع" },
   "منطقة تبوك": { key: "tabuk", prefix: "ت" },
   "منطقة حائل": { key: "hail", prefix: "ح" },
-  "منطقة الحدود الشمالية": { key: "northern", prefix: "ح" }, // الحدود -> ح
+  "منطقة الحدود الشمالية": { key: "northern", prefix: "ن" },
   "منطقة جازان": { key: "jazan", prefix: "ج" },
   "منطقة نجران": { key: "najran", prefix: "ن" },
   "منطقة الباحة": { key: "bahah", prefix: "ب" },
   "منطقة الجوف": { key: "jouf", prefix: "ج" }
 };
 
-async function loadCounters() {
-  try {
-    const raw = await fs.readFile(COUNTERS_FILE, "utf8");
-    const obj = JSON.parse(raw);
-    if (obj && typeof obj === "object") return obj;
-    return {};
-  } catch {
-    return {};
-  }
+function safeText(value, maxLen) {
+  return String(value ?? "").trim().slice(0, maxLen);
 }
 
-async function saveCounters(counters) {
-  await fs.writeFile(COUNTERS_FILE, JSON.stringify(counters, null, 2), "utf8");
-}
+// ================= Schemas =================
+
+const counterSchema = new mongoose.Schema({
+  regionKey: { type: String, unique: true },
+  seq: { type: Number, default: 0 }
+});
+
+const Counter = mongoose.model("Counter", counterSchema);
+
+const submissionSchema = new mongoose.Schema({
+  id: String,
+  seq: Number,
+  regionKey: String,
+  regionLabel: String,
+  prefix: String,
+  name: String,
+  phone: String,
+  email: String,
+  createdAt: { type: Date, default: Date.now }
+});
+
+const Submission = mongoose.model("Submission", submissionSchema);
+
+// ================= Save Route =================
 
 app.post("/save", async (req, res) => {
   try {
@@ -57,52 +86,45 @@ app.post("/save", async (req, res) => {
     const regionLabel = safeText(req.body.region, 50);
 
     if (!name || !phone || !email || !regionLabel) {
-      return res.status(400).json({ error: "All fields are required." });
+      return res.status(400).json({ error: "All fields required" });
     }
 
     const regionInfo = REGION_MAP[regionLabel];
     if (!regionInfo) {
-      return res.status(400).json({ error: "Invalid region selected." });
+      return res.status(400).json({ error: "Invalid region" });
     }
 
-    // Ensure base data folder exists
-    await fs.mkdir(DATA_DIR, { recursive: true });
+    // Atomic increment per region
+    const updated = await Counter.findOneAndUpdate(
+      { regionKey: regionInfo.key },
+      { $inc: { seq: 1 } },
+      { new: true, upsert: true }
+    );
 
-    // Each region has its own "database" folder
-    const regionFolder = path.join(DATA_DIR, regionInfo.key);
-    await fs.mkdir(regionFolder, { recursive: true });
+    const seq = updated.seq;
+    const id = `${regionInfo.prefix}${seq}`;
 
-    // Counters stored in data/counters.json
-    const counters = await loadCounters();
-    const last = Number(counters[regionInfo.key] ?? 0);
-    const next = last + 1;
-
-    counters[regionInfo.key] = next;
-    await saveCounters(counters);
-
-    // ID format: prefix + number (example: ر1, ش2, م15 ...)
-    const id = `${regionInfo.prefix}${next}`;
-    const filename = `${id}.json`;
-    const filepath = path.join(regionFolder, filename);
-
-    const record = {
+    await Submission.create({
       id,
+      seq,
+      regionKey: regionInfo.key,
+      regionLabel,
+      prefix: regionInfo.prefix,
       name,
       phone,
-      email,
-      region: regionLabel,
-      savedAt: new Date().toISOString()
-    };
+      email
+    });
 
-    await fs.writeFile(filepath, JSON.stringify(record, null, 2), "utf8");
+    return res.json({ ok: true });
 
-    return res.json({ ok: true }); // not showing ID to the user
   } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: "Server error saving file." });
+    console.error("Save error:", err);
+    return res.status(500).json({ error: "Server error" });
   }
 });
 
+// ================= Start Server =================
+
 app.listen(PORT, () => {
-  console.log(`Server running at http://localhost:${PORT}`);
+  console.log(`🚀 Server running on port ${PORT}`);
 });
